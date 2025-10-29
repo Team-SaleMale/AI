@@ -1,4 +1,4 @@
-# Auction AI Server
+# ValueBid AI Server
 
 경매 플랫폼을 위한 AI 추천 서버 (FastAPI)
 
@@ -19,3 +19,4 @@ uvicorn main:app --reload
 ```
 
 ## API 문서
+서버 실행 후 http://localhost:8000/docs 접속
