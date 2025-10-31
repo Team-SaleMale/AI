@@ -8,8 +8,9 @@
 
 ## 실행 방법 (Windows)
 ```powershell
-# 가상환경 활성화
-.\salemaleAI\Scripts\Activate.ps1
+# 가상환경 생성 및 활성화
+python -m venv {가상환경명}
+.\{가상환경명}\Scripts\Activate.ps1
 
 # 패키지 설치
 pip install -r requirements.txt
