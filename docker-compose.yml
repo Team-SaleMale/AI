@@ -24,12 +24,6 @@ services:
       DB_PORT: ${DB_PORT:-5432}
       DB_NAME: ${DB_NAME}
       
-      # Optional: Redis (필요시 사용)
-      REDIS_HOST: ${REDIS_HOST:-redis}
-      REDIS_PORT: ${REDIS_PORT:-6379}
-    depends_on:
-      redis:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/"]
       interval: 30s
@@ -39,27 +33,9 @@ services:
     networks:
       - salemale-network
 
-  # Redis Cache (FastAPI에서 필요시 사용)
-  redis:
-    image: redis:7.2
-    container_name: salemale-ai-redis
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:6380:6379"  # BE의 redis(6379)와 포트 충돌 방지
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
-    networks:
-      - salemale-network
-
 networks:
   salemale-network:
     name: salemale-network
     external: true  # BE compose에서 생성한 네트워크 사용
 
-volumes:
-  redis-data:
 

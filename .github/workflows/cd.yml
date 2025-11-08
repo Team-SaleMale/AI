@@ -54,10 +54,6 @@ jobs:
           DB_PORT=${{ secrets.DB_PORT || '5432' }}
           DB_NAME=${{ secrets.DB_NAME }}
           
-          # Redis Configuration
-          REDIS_HOST=redis
-          REDIS_PORT=6379
-          
           # Docker Hub Username
           DOCKERHUB_USERNAME=${{ secrets.DOCKER_USERNAME }}
           EOF
