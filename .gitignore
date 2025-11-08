@@ -19,6 +19,9 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+.env.ai
+env.ai
+*.env
 
 # === IDE ===
 .idea/
@@ -47,3 +50,6 @@ logs/
 htmlcov/
 .coverage
 .pytest_cache/
+
+# === 배포 관련 ===
+DEPLOYMENT_GUIDE.md

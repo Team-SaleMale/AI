@@ -1,0 +1,101 @@
+name: CD
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: cd-ai-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Deploy to EC2 (FastAPI with Docker Compose)
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USERNAME }}
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          set -e
+
+          # 디렉토리 준비
+          mkdir -p /home/ubuntu/salemale/AI
+          cd /home/ubuntu/salemale/AI
+
+          # Git 저장소 준비: 없으면 clone, 있으면 최신 main으로 동기화
+          if [ ! -d .git ]; then
+            git clone https://github.com/${{ github.repository }}.git .
+          fi
+          git fetch --all --prune
+          git checkout main || git checkout -b main origin/main
+          git reset --hard origin/main
+
+          # .env 파일 생성 (GitHub Secrets 사용)
+          cat > .env << EOF
+          # FastAPI Runtime
+          UVICORN_WORKERS=2
+          UVICORN_HOST=0.0.0.0
+          UVICORN_PORT=8000
+          
+          # Database Configuration (RDS)
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_PORT=${{ secrets.DB_PORT || '5432' }}
+          DB_NAME=${{ secrets.DB_NAME }}
+          
+          # Redis Configuration
+          REDIS_HOST=redis
+          REDIS_PORT=6379
+          
+          # Docker Hub Username
+          DOCKERHUB_USERNAME=${{ secrets.DOCKER_USERNAME }}
+          EOF
+
+          # Docker Compose v2/v1 자동 감지
+          if docker compose version >/dev/null 2>&1; then
+            DC="docker compose"
+            WAIT_FLAG="--wait"
+          else
+            DC="docker-compose"
+            WAIT_FLAG=""
+          fi
+
+          # BE compose 네트워크 확인 및 생성 (없으면 생성)
+          if ! docker network inspect salemale-network >/dev/null 2>&1; then
+            echo "Creating salemale-network..."
+            docker network create salemale-network || true
+          fi
+
+          # 프로젝트명 고정
+          export COMPOSE_PROJECT_NAME=salemale-ai
+
+          # 최신 이미지 pull
+          docker pull ${{ secrets.DOCKER_USERNAME }}/salemale-ai:latest
+
+          # 기존 컨테이너 정리
+          $DC down --remove-orphans || true
+
+          # 서비스 재기동
+          $DC up -d --force-recreate --remove-orphans $WAIT_FLAG
+
+          # 배포 상태 확인
+          sleep 10
+          $DC ps
+          
+          # 헬스체크 확인
+          echo "Checking AI server health..."
+          sleep 5
+          curl -f http://localhost:8000/ || echo "Health check failed, but continuing..."
+
+

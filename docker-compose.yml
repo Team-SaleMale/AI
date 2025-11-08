@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  # FastAPI AI Server
+  ai-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${DOCKERHUB_USERNAME}/salemale-ai:latest
+    container_name: salemale-ai
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # FastAPI Runtime
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+      UVICORN_HOST: ${UVICORN_HOST:-0.0.0.0}
+      UVICORN_PORT: ${UVICORN_PORT:-8000}
+      
+      # Database Configuration (RDS - Spring과 동일한 DB 사용)
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME}
+      
+      # Optional: Redis (필요시 사용)
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - salemale-network
+
+  # Redis Cache (FastAPI에서 필요시 사용)
+  redis:
+    image: redis:7.2
+    container_name: salemale-ai-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6380:6379"  # BE의 redis(6379)와 포트 충돌 방지
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - salemale-network
+
+networks:
+  salemale-network:
+    name: salemale-network
+    external: true  # BE compose에서 생성한 네트워크 사용
+
+volumes:
+  redis-data:
+
