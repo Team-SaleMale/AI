@@ -130,6 +130,17 @@ class AuctionRecommender:
     
     def _calculate_similarity(self):
         """코사인 유사도 행렬 계산"""
+        # 피처가 없는 경우 (데이터가 없거나 카테고리가 없는 경우) 처리
+        if self.feature_matrix.shape[1] == 0:
+            print("경고: 피처가 없어 유사도 행렬을 생성할 수 없습니다. 빈 행렬로 초기화합니다.")
+            # 빈 유사도 행렬 생성 (사용자 수 x 사용자 수)
+            n_users = len(self.user_id_list)
+            self.similarity_matrix = np.zeros((n_users, n_users))
+            # 사용자 ID → 행렬 인덱스 매핑
+            self.user_idx_map = {uid: idx for idx, uid in enumerate(self.user_id_list)}
+            print(f"빈 유사도 행렬 생성 완료. Shape: {self.similarity_matrix.shape}")
+            return
+        
         # sklearn의 cosine_similarity 사용
         self.similarity_matrix = cosine_similarity(self.feature_matrix)
         
