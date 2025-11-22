@@ -185,7 +185,8 @@ class AuctionRecommender:
     def recommend_items(
         self, 
         target_user_id: int, 
-        n_recommendations: int = 10
+        n_recommendations: int = 10,
+        db_session: Session = None  # ⭐ 새 파라미터 추가
     ) -> List[ItemRecommendation]:
         """
         대상 사용자에게 경매 상품 추천
@@ -193,155 +194,167 @@ class AuctionRecommender:
         Args:
             target_user_id: 추천 대상 사용자 ID
             n_recommendations: 추천할 상품 개수 (기본값: 10)
+            db_session: DB 세션 (매 요청마다 새로 전달)
         
         Returns:
             추천 상품 리스트 (ItemRecommendation 객체)
         """
         from datetime import datetime
         
+        # ⭐ 세션 선택: 전달받은 세션이 있으면 사용, 없으면 초기화 시 세션 사용
+        db = db_session if db_session is not None else self.db
+        
         print(f"사용자 {target_user_id}에 대한 추천 생성 시작...")
         
-        # 1. 유사 사용자 찾기
-        similar_users = self.get_similar_users(target_user_id, n_users=5)
-        
-        # Cold Start 대응: 유사 사용자가 없으면 인기 상품 추천
-        if not similar_users:
-            print(f"사용자 {target_user_id}의 유사 사용자를 찾을 수 없습니다. 인기 상품으로 대체합니다.")
-            return self._get_popular_items(target_user_id, n_recommendations)
-        
-        print(f"유사 사용자 {len(similar_users)}명 발견: {similar_users}")
-        
-        # 2. 유사 사용자들이 입찰/찜한 상품 수집
-        candidate_items = []
-        for uid in similar_users:
-            # 입찰한 상품
-            candidate_items.extend(self.user_bid_items.get(uid, []))
-            # 찜한 상품
-            candidate_items.extend(self.user_liked_items.get(uid, []))
-        
-        # 3. 대상 사용자가 이미 접한 상품 제외
-        user_interacted = self.user_bid_items.get(target_user_id, set()) | \
-                         self.user_liked_items.get(target_user_id, set())
-        
-        # 4. 빈도수 계산 (많이 추천될수록 높은 점수)
-        candidate_counts = Counter(candidate_items)
-        
-        # 이미 접한 상품 제거
-        for item_id in user_interacted:
-            candidate_counts.pop(item_id, None)
-        
-        # 5. 상위 N개 추출
-        recommended_item_ids = [item_id for item_id, _ in candidate_counts.most_common(n_recommendations * 2)]
-        
-        # Cold Start 대응: 후보 아이템이 없으면 인기 상품 추천
-        if not recommended_item_ids:
-            print("협업 필터링 후보가 없습니다. 인기 상품으로 대체합니다.")
-            return self._get_popular_items(target_user_id, n_recommendations)
-        
-        # 6. DB에서 상품 상세 정보 조회
-        # 수정: 현재 시간 기준으로 실제 입찰 가능한 상품만 필터링
-        now = datetime.utcnow()
-        items = self.db.query(ItemDB).filter(
-            ItemDB.item_id.in_(recommended_item_ids),
-            ItemDB.item_status == ItemStatusEnum.BIDDING,
-            ItemDB.end_time > now  # 추가: 경매 종료 시간 체크
-        ).all()
-        
-        # 7. ItemRecommendation 객체로 변환
-        recommended_items = []
-        for item in items[:n_recommendations]:
-            recommendation = ItemRecommendation(
-                item_id=item.item_id,
-                name=item.name,
-                title=item.title,
-                category=item.category,
-                current_price=item.current_price,
-                end_time=item.end_time,
-                item_status=item.item_status,
-                region_name=item.region.sigungu,
-                view_count=item.view_count,
-                bid_count=item.bid_count,
-                recommendation_score=candidate_counts.get(item.item_id, 0)
-            )
-            recommended_items.append(recommendation)
-        
-        # Cold Start 대응: 결과가 부족하면 인기 상품으로 채우기
-        if len(recommended_items) < n_recommendations:
-            print(f"추천 결과가 부족합니다 ({len(recommended_items)}/{n_recommendations}). 인기 상품으로 보완합니다.")
-            popular_items = self._get_popular_items(target_user_id, n_recommendations - len(recommended_items))
+        try:
+            # 1. 유사 사용자 찾기
+            similar_users = self.get_similar_users(target_user_id, n_users=5)
             
-            # 중복 제거
-            existing_ids = {item.item_id for item in recommended_items}
-            for item in popular_items:
-                if item.item_id not in existing_ids:
-                    recommended_items.append(item)
-                    if len(recommended_items) >= n_recommendations:
-                        break
+            # Cold Start 대응: 유사 사용자가 없으면 인기 상품 추천
+            if not similar_users:
+                print(f"사용자 {target_user_id}의 유사 사용자를 찾을 수 없습니다. 인기 상품으로 대체합니다.")
+                # ⭐ 롤백 후 인기 상품 조회
+                db.rollback()
+                return self._get_popular_items(target_user_id, n_recommendations, db)
+            
+            print(f"유사 사용자 {len(similar_users)}명 발견: {similar_users}")
+            
+            # 2. 유사 사용자들이 입찰/찜한 상품 수집
+            candidate_items = []
+            for uid in similar_users:
+                candidate_items.extend(self.user_bid_items.get(uid, []))
+                candidate_items.extend(self.user_liked_items.get(uid, []))
+            
+            # 3. 대상 사용자가 이미 접한 상품 제외
+            user_interacted = self.user_bid_items.get(target_user_id, set()) | \
+                             self.user_liked_items.get(target_user_id, set())
+            
+            # 4. 빈도수 계산
+            candidate_counts = Counter(candidate_items)
+            
+            for item_id in user_interacted:
+                candidate_counts.pop(item_id, None)
+            
+            # 5. 상위 N개 추출
+            recommended_item_ids = [item_id for item_id, _ in candidate_counts.most_common(n_recommendations * 2)]
+            
+            # Cold Start 대응: 후보 아이템이 없으면 인기 상품 추천
+            if not recommended_item_ids:
+                print("협업 필터링 후보가 없습니다. 인기 상품으로 대체합니다.")
+                # ⭐ 롤백 후 인기 상품 조회
+                db.rollback()
+                return self._get_popular_items(target_user_id, n_recommendations, db)
+            
+            # ⭐ 6. DB에서 상품 상세 정보 조회 (try-except 추가)
+            now = datetime.utcnow()
+            items = db.query(ItemDB).filter(
+                ItemDB.item_id.in_(recommended_item_ids),
+                ItemDB.item_status == ItemStatusEnum.BIDDING,
+                ItemDB.end_time > now
+            ).all()
+            
+            # 7. ItemRecommendation 객체로 변환
+            recommended_items = []
+            for item in items[:n_recommendations]:
+                recommendation = ItemRecommendation(
+                    item_id=item.item_id,
+                    name=item.name,
+                    title=item.title,
+                    category=item.category,
+                    current_price=item.current_price,
+                    end_time=item.end_time,
+                    item_status=item.item_status,
+                    region_name=item.region.sigungu,
+                    view_count=item.view_count,
+                    bid_count=item.bid_count,
+                    recommendation_score=candidate_counts.get(item.item_id, 0)
+                )
+                recommended_items.append(recommendation)
+            
+            # Cold Start 대응: 결과가 부족하면 인기 상품으로 채우기
+            if len(recommended_items) < n_recommendations:
+                print(f"추천 결과가 부족합니다 ({len(recommended_items)}/{n_recommendations}). 인기 상품으로 보완합니다.")
+                # ⭐ 롤백 후 인기 상품 조회
+                db.rollback()
+                popular_items = self._get_popular_items(target_user_id, n_recommendations - len(recommended_items), db)
+                
+                existing_ids = {item.item_id for item in recommended_items}
+                for item in popular_items:
+                    if item.item_id not in existing_ids:
+                        recommended_items.append(item)
+                        if len(recommended_items) >= n_recommendations:
+                            break
+            
+            print(f"추천 생성 완료. 추천 상품 수: {len(recommended_items)}")
+            return recommended_items
         
-        print(f"추천 생성 완료. 추천 상품 수: {len(recommended_items)}")
-        return recommended_items
+        except Exception as e:
+            # ⭐ 에러 발생 시 반드시 롤백
+            print(f"[ERROR] 추천 생성 중 오류 발생: {str(e)}")
+            db.rollback()
+            # 인기 상품으로 폴백
+            return self._get_popular_items(target_user_id, n_recommendations, db)
     
-    def _get_popular_items(self, target_user_id: int, n_items: int) -> List[ItemRecommendation]:
+    def _get_popular_items(
+        self, 
+        target_user_id: int, 
+        n_items: int,
+        db_session: Session = None  # ⭐ 새 파라미터 추가
+    ) -> List[ItemRecommendation]:
         """
         인기 상품 추천 (Cold Start 대응)
-        - 최근 3일 내 생성
-        - 입찰 수 많은 순
-        - 사용자가 이미 접한 상품 제외
-        
-        Args:
-            target_user_id: 대상 사용자 ID
-            n_items: 추천할 상품 개수
-        
-        Returns:
-            인기 상품 리스트
         """
         from datetime import datetime, timedelta
         
-        # 사용자가 이미 접한 상품 제외
-        user_interacted = self.user_bid_items.get(target_user_id, set()) | \
-                         self.user_liked_items.get(target_user_id, set())
+        # ⭐ 세션 선택
+        db = db_session if db_session is not None else self.db
         
-        # 최근 3일 내 생성된 입찰 가능한 인기 상품 조회
-        three_days_ago = datetime.utcnow() - timedelta(days=3)
-        now = datetime.utcnow()
-        
-        # 사용자가 접한 상품이 있을 때만 필터링
-        if user_interacted:
-            items = self.db.query(ItemDB).filter(
-                ItemDB.item_status == ItemStatusEnum.BIDDING,
-                ItemDB.end_time > now,
-                ItemDB.created_at > three_days_ago,
-                ~ItemDB.item_id.in_(user_interacted)
-            ).order_by(
-                ItemDB.bid_count.desc(),
-                ItemDB.view_count.desc()
-            ).limit(n_items * 2).all()
-        else:
-            items = self.db.query(ItemDB).filter(
+        try:
+            # 사용자가 이미 접한 상품 제외
+            user_interacted = self.user_bid_items.get(target_user_id, set()) | \
+                             self.user_liked_items.get(target_user_id, set())
+            
+            # 최근 3일 내 생성된 입찰 가능한 인기 상품 조회
+            three_days_ago = datetime.utcnow() - timedelta(days=3)
+            now = datetime.utcnow()
+            
+            # ⭐ 쿼리 간소화
+            query = db.query(ItemDB).filter(
                 ItemDB.item_status == ItemStatusEnum.BIDDING,
                 ItemDB.end_time > now,
                 ItemDB.created_at > three_days_ago
-            ).order_by(
+            )
+            
+            if user_interacted:
+                query = query.filter(~ItemDB.item_id.in_(user_interacted))
+            
+            items = query.order_by(
                 ItemDB.bid_count.desc(),
                 ItemDB.view_count.desc()
             ).limit(n_items * 2).all()
+            
+            # ItemRecommendation 객체로 변환
+            popular_items = []
+            for item in items[:n_items]:
+                recommendation = ItemRecommendation(
+                    item_id=item.item_id,
+                    name=item.name,
+                    title=item.title,
+                    category=item.category,
+                    current_price=item.current_price,
+                    end_time=item.end_time,
+                    item_status=item.item_status,
+                    region_name=item.region.sigungu,
+                    view_count=item.view_count,
+                    bid_count=item.bid_count,
+                    recommendation_score=0
+                )
+                popular_items.append(recommendation)
+            
+            return popular_items
         
-        # ItemRecommendation 객체로 변환
-        popular_items = []
-        for item in items[:n_items]:
-            recommendation = ItemRecommendation(
-                item_id=item.item_id,
-                name=item.name,
-                title=item.title,
-                category=item.category,
-                current_price=item.current_price,
-                end_time=item.end_time,
-                item_status=item.item_status,
-                region_name=item.region.sigungu,
-                view_count=item.view_count,
-                bid_count=item.bid_count,
-                recommendation_score=0  # 인기 상품은 점수 0
-            )
-            popular_items.append(recommendation)
-        
-        return popular_items
+        except Exception as e:
+            # ⭐ 에러 발생 시 롤백 후 빈 리스트 반환
+            print(f"[ERROR] 인기 상품 조회 중 오류 발생: {str(e)}")
+            db.rollback()
+            return []

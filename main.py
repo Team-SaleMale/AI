@@ -53,6 +53,7 @@ origins = [
     "http://localhost:8080",  # Spring Boot 로컬
     "http://localhost:3000",  # React 로컬
     # 프로덕션 도메인 추가
+    "*"
 ]
 
 app.add_middleware(
@@ -109,26 +110,39 @@ def get_auction_recommendations(
     print(f"[/recommend-auctions] 요청 시작: user_id={request.user_id}")
     start_time = time.time()
     
-    # 1. 사용자 존재 확인
-    user_exists = db.query(UserDB.id).filter(UserDB.id == request.user_id).first()
-    if not user_exists:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with id {request.user_id} not found"
+    try:
+        # 1. 사용자 존재 확인
+        user_exists = db.query(UserDB.id).filter(UserDB.id == request.user_id).first()
+        if not user_exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with id {request.user_id} not found"
+            )
+        
+        # ⭐ 2. 추천 실행 (새 세션 전달)
+        recommended_items = recommender.recommend_items(
+            target_user_id=request.user_id,
+            n_recommendations=10,
+            db_session=db  # ⭐ 새 세션 전달
         )
+        
+        elapsed = time.time() - start_time
+        print(f"[/recommend-auctions] 요청 완료. 추천 수: {len(recommended_items)}, 소요 시간: {elapsed:.4f}초")
+        print(f"{'='*60}\n")
+        
+        # 3. 응답 반환
+        return RecommendationResponse(recommended_items=recommended_items)
     
-    # 2. 추천 실행
-    recommended_items = recommender.recommend_items(
-        target_user_id=request.user_id,
-        n_recommendations=10
-    )
-    
-    elapsed = time.time() - start_time
-    print(f"[/recommend-auctions] 요청 완료. 추천 수: {len(recommended_items)}, 소요 시간: {elapsed:.4f}초")
-    print(f"{'='*60}\n")
-    
-    # 3. 응답 반환
-    return RecommendationResponse(recommended_items=recommended_items)
+    except HTTPException:
+        raise
+    except Exception as e:
+        # ⭐ 에러 발생 시 롤백
+        print(f"[ERROR] 추천 API 오류: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"추천 생성 중 오류 발생: {str(e)}"
+        )
 
 if __name__ == "__main__":
     import uvicorn
