@@ -3,7 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
+import logging
+import os
 import time
+import uuid
 
 from models.api_models import (
     RecommendationRequest,
@@ -16,6 +19,9 @@ from utils.database import get_db, SessionLocal
 from utils.recommender import AuctionRecommender
 from utils.storage import upload_fileobj
 from services.virtual_tryon import run_virtual_tryon
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("valuebid-ai")
 
 # 전역 추천 인스턴스
 recommender_instance: AuctionRecommender = None
@@ -30,7 +36,7 @@ async def lifespan(app: FastAPI):
     """
     global recommender_instance
 
-    print("서버 시작 중: AuctionRecommender 초기화...")
+    logger.info("서버 시작 중: AuctionRecommender 초기화...")
     
     db_session = SessionLocal()
     try:
@@ -38,11 +44,11 @@ async def lifespan(app: FastAPI):
     finally:
         db_session.close()
     
-    print("서버가 요청을 처리할 준비가 되었습니다!")
+    logger.info("서버가 요청을 처리할 준비가 되었습니다!")
     
     yield  # 서버 실행
     
-    print("서버 종료 중...")
+    logger.info("서버 종료 중...")
 
 # FastAPI 애플리케이션 생성
 app = FastAPI(
@@ -76,6 +82,15 @@ def get_recommender_instance() -> AuctionRecommender:
             detail="Recommender not initialized"
         )
     return recommender_instance
+
+
+def _file_size(upload: UploadFile) -> int:
+    """업로드 파일 사이즈(바이트) 계산"""
+    current = upload.file.tell()
+    upload.file.seek(0, os.SEEK_END)
+    size = upload.file.tell()
+    upload.file.seek(current)
+    return size
 
 
 def _upload_input_file(upload: UploadFile, prefix: str) -> str:
@@ -117,8 +132,7 @@ def get_auction_recommendations(
             ]
         }
     """
-    print(f"\n{'='*60}")
-    print(f"[/recommend-auctions] 요청 시작: user_id={request.user_id}")
+    logger.info("[/recommend-auctions] 요청 시작: user_id=%s", request.user_id)
     start_time = time.time()
     
     try:
@@ -138,8 +152,11 @@ def get_auction_recommendations(
         )
         
         elapsed = time.time() - start_time
-        print(f"[/recommend-auctions] 요청 완료. 추천 수: {len(recommended_items)}, 소요 시간: {elapsed:.4f}초")
-        print(f"{'='*60}\n")
+        logger.info(
+            "[/recommend-auctions] 요청 완료: 추천 수=%s, 소요 시간=%.4f초",
+            len(recommended_items),
+            elapsed,
+        )
         
         # 3. 응답 반환
         return RecommendationResponse(recommended_items=recommended_items)
@@ -148,7 +165,7 @@ def get_auction_recommendations(
         raise
     except Exception as e:
         # ⭐ 에러 발생 시 롤백
-        print(f"[ERROR] 추천 API 오류: {str(e)}")
+        logger.exception("[/recommend-auctions] 추천 API 오류")
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -165,9 +182,30 @@ async def virtual_tryon_endpoint(
     denoise_steps: int = Form(30, ge=1, le=100, description="노이즈 제거 단계"),
     seed: int = Form(42, description="랜덤 시드"),
 ):
+    request_id = uuid.uuid4().hex
+    bg_size = _file_size(background)
+    garment_size = _file_size(garment)
+    logger.info(
+        "[%s] /virtual-tryon 요청 진입 - desc=%s, crop=%s, denoise=%s, seed=%s, background_size=%s bytes, garment_size=%s bytes",
+        request_id,
+        garment_desc,
+        crop,
+        denoise_steps,
+        seed,
+        bg_size,
+        garment_size,
+    )
+
     try:
+        logger.info("[%s] S3 업로드 시작 (background)", request_id)
         background_url = _upload_input_file(background, "tryon/backgrounds")
+        logger.info("[%s] S3 업로드 완료 (background)", request_id)
+
+        logger.info("[%s] S3 업로드 시작 (garment)", request_id)
         garment_url = _upload_input_file(garment, "tryon/garments")
+        logger.info("[%s] S3 업로드 완료 (garment)", request_id)
+
+        logger.info("[%s] Hugging Face 호출 시작", request_id)
         result_url, masked_url = await run_in_threadpool(
             run_virtual_tryon,
             background_url,
@@ -178,7 +216,9 @@ async def virtual_tryon_endpoint(
             denoise_steps,
             seed,
         )
+        logger.info("[%s] Hugging Face 호출 성공 - result=%s, masked=%s", request_id, result_url, masked_url)
     except Exception as exc:
+        logger.exception("[%s] /virtual-tryon 처리 실패", request_id)
         raise HTTPException(status_code=502, detail=f"Virtual try-on failed: {exc}") from exc
 
     return TryOnResponse(result_url=result_url, masked_url=masked_url)
