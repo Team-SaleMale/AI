@@ -97,7 +97,7 @@ RECOMMENDATION_API_URL=http://ai-server:8000
 | `DOCKERHUB_USERNAME` | Docker Hub 사용자명 | (필수) |
 | `HF_SPACE_ID` | Hugging Face Space ID | `yisol/IDM-VTON` |
 | `HF_API_TOKEN` | Hugging Face API 토큰 (Private Space 시) | (선택) |
-| `HF_REQUEST_TIMEOUT` | Hugging Face 호출 타임아웃(초) | `600` |
+| `HF_REQUEST_TIMEOUT` | Hugging Face 호출 타임아웃(초) | `180` (3분) |
 | `S3_BUCKET_NAME` | 결과 이미지 저장용 S3 버킷 | (필수) |
 | `S3_REGION` | S3 리전 (또는 `AWS_S3_REGION`) | `ap-northeast-2` |
 | `AWS_ACCESS_KEY` | S3 접근 키 | (필수) |

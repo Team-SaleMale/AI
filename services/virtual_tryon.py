@@ -59,7 +59,8 @@ def run_virtual_tryon(
     garment_path = _write_temp_file(garment_bytes, garment_filename)
 
     try:
-        result = client.predict(
+        # submit으로 job을 만들고, HF_REQUEST_TIMEOUT(초) 만큼만 대기
+        job = client.submit(
             dict={"background": gradio_file(bg_path), "layers": [], "composite": None},
             garm_img=gradio_file(garment_path),
             garment_des=garment_desc,
@@ -69,6 +70,7 @@ def run_virtual_tryon(
             seed=seed,
             api_name="/tryon",
         )
+        result = job.result(timeout=HF_REQUEST_TIMEOUT)
     finally:
         try:
             os.remove(bg_path)
