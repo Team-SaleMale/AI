@@ -1,26 +1,25 @@
 import mimetypes
 import os
 import tempfile
-from typing import Tuple
+from typing import Tuple, List, Optional
 
 from gradio_client import Client, file as gradio_file
 
 from utils.storage import upload_bytes
+
 HF_SPACE_ID = os.getenv("HF_SPACE_ID", "yisol/IDM-VTON")
-HF_API_TOKEN = os.getenv("HF_API_TOKEN") or None
 HF_REQUEST_TIMEOUT = int(os.getenv("HF_REQUEST_TIMEOUT", "600"))
 
-_client: Client | None = None
+# 여러 토큰을 콤마로 구분해 받을 수 있도록 지원 (HF_API_TOKENS 우선)
+_hf_tokens_raw = os.getenv("HF_API_TOKENS") or os.getenv("HF_API_TOKEN") or ""
+HF_API_TOKENS: List[str] = [t.strip() for t in _hf_tokens_raw.split(",") if t.strip()]
 
 
-def _get_client() -> Client:
-    global _client
-    if _client is None:
-        kwargs = {}
-        if HF_API_TOKEN:
-            kwargs["hf_token"] = HF_API_TOKEN
-        _client = Client(HF_SPACE_ID, **kwargs)
-    return _client
+def _make_client(token: Optional[str]) -> Client:
+    kwargs = {}
+    if token:
+        kwargs["hf_token"] = token
+    return Client(HF_SPACE_ID, **kwargs)
 
 
 def _write_temp_file(data: bytes, filename: str | None) -> str:
@@ -53,24 +52,45 @@ def run_virtual_tryon(
     denoise_steps: int = 30,
     seed: int = 42,
 ) -> Tuple[str, str | None]:
-    client = _get_client()
+    if not HF_API_TOKENS:
+        # 토큰이 없으면 익명 호출 시도 (공개 Space인 경우만 동작)
+        tokens_to_try: List[Optional[str]] = [None]
+    else:
+        tokens_to_try = [t for t in HF_API_TOKENS]
 
     bg_path = _write_temp_file(background_bytes, background_filename)
     garment_path = _write_temp_file(garment_bytes, garment_filename)
 
+    last_error: Optional[Exception] = None
+
     try:
-        # submit으로 job을 만들고, HF_REQUEST_TIMEOUT(초) 만큼만 대기
-        job = client.submit(
-            dict={"background": gradio_file(bg_path), "layers": [], "composite": None},
-            garm_img=gradio_file(garment_path),
-            garment_des=garment_desc,
-            is_checked=is_checked,
-            is_checked_crop=crop,
-            denoise_steps=denoise_steps,
-            seed=seed,
-            api_name="/tryon",
-        )
-        result = job.result(timeout=HF_REQUEST_TIMEOUT)
+        for token in tokens_to_try:
+            client = _make_client(token)
+            try:
+                # submit으로 job을 만들고, HF_REQUEST_TIMEOUT(초) 만큼만 대기
+                job = client.submit(
+                    dict={"background": gradio_file(bg_path), "layers": [], "composite": None},
+                    garm_img=gradio_file(garment_path),
+                    garment_des=garment_desc,
+                    is_checked=is_checked,
+                    is_checked_crop=crop,
+                    denoise_steps=denoise_steps,
+                    seed=seed,
+                    api_name="/tryon",
+                )
+                result = job.result(timeout=HF_REQUEST_TIMEOUT)
+                break  # 성공하면 루프 종료
+            except Exception as exc:
+                last_error = exc
+                msg = str(exc)
+                # ZeroGPU 쿼터 초과 같은 경우에만 다음 토큰으로 넘어감
+                if "ZeroGPU" in msg or "quota" in msg:
+                    continue
+                # 그 외 에러는 바로 중단
+                raise
+        else:
+            # 모든 토큰이 실패한 경우
+            raise RuntimeError(f"Hugging Face 호출 실패 (모든 토큰 소진): {last_error}")
     finally:
         try:
             os.remove(bg_path)
