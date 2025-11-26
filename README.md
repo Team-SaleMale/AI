@@ -242,16 +242,3 @@ AI/
 ├── Dockerfile             # Docker 이미지 빌드
 └── requirements.txt        # Python 의존성
 ```
-
-### 로컬 개발 시 주의사항
-
-1. **DB 연결**: RDS 또는 로컬 PostgreSQL 필요
-2. **네트워크**: Spring Boot와 함께 테스트 시 Docker 네트워크 사용 권장
-3. **포트 충돌**: 8000 포트가 사용 중이면 `.env`에서 변경
-
-## 📝 참고사항
-
-- FastAPI는 Spring Boot와 **동일한 RDS 데이터베이스**를 사용합니다
-- Redis는 선택적이며, 현재는 사용하지 않을 수 있습니다
-- 헬스체크는 `/` 엔드포인트를 사용합니다
-- Docker Compose는 `salemale-network` 외부 네트워크를 사용하여 BE와 통신합니다
