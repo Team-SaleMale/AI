@@ -1,10 +1,13 @@
 import os
 import uuid
 from io import BytesIO
-from typing import BinaryIO
 
 import boto3
 from botocore.config import Config
+from dotenv import load_dotenv
+
+# .env 로드
+load_dotenv()
 
 S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
 S3_REGION = os.getenv("S3_REGION") or os.getenv("AWS_S3_REGION")
@@ -32,9 +35,7 @@ def upload_bytes(
     filename: str | None = None,
     content_type: str | None = None,
 ) -> str:
-    """
-    바이트 데이터를 S3에 업로드하고 공개 URL을 반환.
-    """
+    """바이트 데이터를 S3에 업로드하고 공개 URL을 반환."""
     ext = ""
     if filename and "." in filename:
         ext = os.path.splitext(filename)[1]
@@ -46,14 +47,3 @@ def upload_bytes(
 
     _s3_client.upload_fileobj(BytesIO(data), S3_BUCKET_NAME, key, ExtraArgs=extra_args)
     return f"https://{S3_BUCKET_NAME}.s3.{S3_REGION}.amazonaws.com/{key}"
-
-{
-  "cells": [],
-  "metadata": {
-    "language_info": {
-      "name": "python"
-    }
-  },
-  "nbformat": 4,
-  "nbformat_minor": 2
-}
