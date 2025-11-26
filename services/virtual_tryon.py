@@ -1,44 +1,43 @@
 import base64
-import json
+import mimetypes
 import os
+import tempfile
 from typing import Tuple
 
-import requests
+from gradio_client import Client, file as gradio_file
 
 HF_SPACE_ID = os.getenv("HF_SPACE_ID", "yisol/IDM-VTON")
 HF_API_TOKEN = os.getenv("HF_API_TOKEN") or None
 HF_REQUEST_TIMEOUT = int(os.getenv("HF_REQUEST_TIMEOUT", "600"))
 
-
-def _build_space_url() -> str:
-    # allow overriding with full url
-    if HF_SPACE_ID.startswith("http"):
-        return HF_SPACE_ID.rstrip("/")
-    return f"https://{HF_SPACE_ID.replace('/', '-').lower()}.hf.space"
+_client: Client | None = None
 
 
-HF_BASE_URL = _build_space_url()
+def _get_client() -> Client:
+    global _client
+    if _client is None:
+        kwargs = {}
+        if HF_API_TOKEN:
+            kwargs["hf_token"] = HF_API_TOKEN
+        _client = Client(HF_SPACE_ID, **kwargs)
+    return _client
 
 
-def _to_data_url(content: bytes, content_type: str | None) -> str | None:
-    if not content:
-        return None
-    mime = content_type or "image/png"
-    encoded = base64.b64encode(content).decode("utf-8")
+def _write_temp_file(data: bytes, filename: str | None) -> str:
+    suffix = ""
+    if filename and "." in filename:
+        suffix = os.path.splitext(filename)[1]
+    fd, path = tempfile.mkstemp(suffix=suffix or ".png")
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    return path
+
+
+def _to_data_url_from_path(path: str) -> str:
+    mime = mimetypes.guess_type(path)[0] or "image/png"
+    with open(path, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode("utf-8")
     return f"data:{mime};base64,{encoded}"
-
-
-def _extract_media(entries, index: int) -> str | None:
-    if not entries or len(entries) <= index:
-        return None
-    entry = entries[index]
-    if isinstance(entry, str):
-        return entry
-    if isinstance(entry, dict):
-        return entry.get("url") or entry.get("data")
-    if isinstance(entry, list) and entry:
-        return _extract_media(entry, 0)
-    return None
 
 
 def run_virtual_tryon(
@@ -54,48 +53,34 @@ def run_virtual_tryon(
     denoise_steps: int = 30,
     seed: int = 42,
 ) -> Tuple[str, str | None]:
-    headers = {}
-    if HF_API_TOKEN:
-        headers["Authorization"] = f"Bearer {HF_API_TOKEN}"
+    client = _get_client()
 
-    editor_payload = {
-        "background": _to_data_url(background_bytes, background_content_type),
-        "layers": [],
-        "composite": None,
-    }
+    bg_path = _write_temp_file(background_bytes, background_filename)
+    garment_path = _write_temp_file(garment_bytes, garment_filename)
 
-    files = {
-        "dict": (None, json.dumps(editor_payload), "application/json"),
-        "garm_img": (
-            garment_filename or "garment.png",
-            garment_bytes,
-            garment_content_type or "application/octet-stream",
-        ),
-    }
+    try:
+        result = client.predict(
+            dict={"background": gradio_file(bg_path), "layers": [], "composite": None},
+            garm_img=gradio_file(garment_path),
+            garment_des=garment_desc,
+            is_checked=is_checked,
+            is_checked_crop=crop,
+            denoise_steps=denoise_steps,
+            seed=seed,
+            api_name="/tryon",
+        )
+    finally:
+        try:
+            os.remove(bg_path)
+        except OSError:
+            pass
+        try:
+            os.remove(garment_path)
+        except OSError:
+            pass
 
-    data = {
-        "garment_des": garment_desc,
-        "is_checked": str(is_checked).lower(),
-        "is_checked_crop": str(crop).lower(),
-        "denoise_steps": str(denoise_steps),
-        "seed": str(seed),
-    }
-
-    response = requests.post(
-        f"{HF_BASE_URL}/tryon",
-        data=data,
-        files=files,
-        headers=headers,
-        timeout=HF_REQUEST_TIMEOUT,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    outputs = payload.get("data", [])
-    result_media = _extract_media(outputs, 0)
-    masked_media = _extract_media(outputs, 1)
-
-    if not result_media:
-        raise RuntimeError("Hugging Face 응답에서 결과 이미지를 찾을 수 없습니다.")
-
-    return result_media, masked_media
+    output_path, masked_path = result
+    result_url = _to_data_url_from_path(output_path)
+    masked_url = _to_data_url_from_path(masked_path) if masked_path else None
+    return result_url, masked_url
 
