@@ -29,3 +29,9 @@ class HealthCheckResponse(BaseModel):
     """헬스체크 응답"""
     status: str
     message: str
+
+
+class TryOnResponse(BaseModel):
+    """가상 피팅 결과"""
+    result_url: str
+    masked_url: Optional[str] = None

@@ -97,9 +97,13 @@ RECOMMENDATION_API_URL=http://ai-server:8000
 | `DB_HOST` | RDS 엔드포인트 | (필수) |
 | `DB_PORT` | PostgreSQL 포트 | `5432` |
 | `DB_NAME` | 데이터베이스 이름 | (필수) |
-| `REDIS_HOST` | Redis 호스트 | `redis` |
-| `REDIS_PORT` | Redis 포트 | `6379` |
 | `DOCKERHUB_USERNAME` | Docker Hub 사용자명 | (필수) |
+| `HF_SPACE_ID` | Hugging Face Space ID | `yisol/IDM-VTON` |
+| `HF_API_TOKEN` | Hugging Face API 토큰 (Private Space 시) | (선택) |
+| `S3_BUCKET_NAME` | 이미지 저장용 S3 버킷 | (필수) |
+| `S3_REGION` | S3 리전 | `ap-northeast-2` |
+| `AWS_ACCESS_KEY` | S3 접근 키 | (필수) |
+| `AWS_SECRET_KEY` | S3 시크릿 키 | (필수) |
 
 ## 📡 API 엔드포인트
 
@@ -121,6 +125,26 @@ Content-Type: application/json
 ### API 문서
 서버 실행 후 http://localhost:8000/docs 접속
 
+### 가상 피팅 (Virtual Try-On)
+```
+POST http://localhost:8000/virtual-tryon
+Content-Type: multipart/form-data
+
+background: <사용자 이미지 파일>
+garment: <의상 이미지 파일>
+garment_desc: "블루 셔츠"
+crop: false
+denoise_steps: 30
+seed: 42
+```
+응답:
+```
+{
+  "result_url": "https://s3.../tryon/results/xxx.png",
+  "masked_url": "https://s3.../tryon/masked/xxx.png"
+}
+```
+
 ## 🚢 배포 (GitHub Actions CD)
 
 ### 필요한 GitHub Secrets
@@ -139,6 +163,8 @@ Content-Type: application/json
 - `DB_PORT`: RDS 포트 (기본: `5432`)
 - `DB_NAME`: 데이터베이스 이름
 - `DOCKER_USERNAME`: Docker Hub 사용자명
+- `HF_API_TOKEN`: Hugging Face Space 토큰 (필요시)
+- `S3_BUCKET_NAME`, `S3_REGION`, `AWS_ACCESS_KEY`, `AWS_SECRET_KEY`: S3 업로드용
 
 ### 배포 흐름
 
@@ -177,6 +203,33 @@ ResponseEntity<RecommendationResponse> response = restTemplate.postForEntity(
 ```
 
 **⚠️ 중요:** `localhost`가 아닌 **서비스 이름** (`ai-server`)을 사용해야 합니다.
+
+### 가상 피팅 API 사용 예시
+
+```java
+public TryOnResponse callTryOn(MultipartFile human, MultipartFile garment, String desc) {
+    MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+    body.add("background", new MultipartInputStreamFileResource(human.getInputStream(), human.getOriginalFilename()));
+    body.add("garment", new MultipartInputStreamFileResource(garment.getInputStream(), garment.getOriginalFilename()));
+    body.add("garment_desc", desc);
+    body.add("crop", false);
+    body.add("denoise_steps", 30);
+    body.add("seed", 42);
+
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+    HttpEntity<MultiValueMap<String, Object>> request = new HttpEntity<>(body, headers);
+    ResponseEntity<TryOnResponse> response = restTemplate.postForEntity(
+        "http://ai-server:8000/virtual-tryon",
+        request,
+        TryOnResponse.class
+    );
+    return response.getBody();
+}
+```
+
+`MultipartInputStreamFileResource`는 Spring 공식 예제처럼 MultipartFile을 RestTemplate에 전달하기 위한 헬퍼 클래스입니다.
 
 ## 🛠️ 개발 가이드
 

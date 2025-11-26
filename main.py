@@ -1,5 +1,6 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
 import time
@@ -7,11 +8,14 @@ import time
 from models.api_models import (
     RecommendationRequest,
     RecommendationResponse,
-    HealthCheckResponse
+    HealthCheckResponse,
+    TryOnResponse,
 )
 from models.db_models import UserDB
 from utils.database import get_db, SessionLocal
 from utils.recommender import AuctionRecommender
+from utils.storage import upload_fileobj
+from services.virtual_tryon import run_virtual_tryon
 
 # 전역 추천 인스턴스
 recommender_instance: AuctionRecommender = None
@@ -72,6 +76,13 @@ def get_recommender_instance() -> AuctionRecommender:
         )
     return recommender_instance
 
+
+def _upload_input_file(upload: UploadFile, prefix: str) -> str:
+    upload.file.seek(0)
+    filename = upload.filename or "upload.bin"
+    content_type = upload.content_type or "application/octet-stream"
+    return upload_fileobj(upload.file, filename, prefix, content_type)
+
 @app.get("/", response_model=HealthCheckResponse)
 def health_check():
     """헬스체크 엔드포인트"""
@@ -129,6 +140,34 @@ def get_auction_recommendations(
     
     # 3. 응답 반환
     return RecommendationResponse(recommended_items=recommended_items)
+
+
+@app.post("/virtual-tryon", response_model=TryOnResponse)
+async def virtual_tryon_endpoint(
+    background: UploadFile = File(..., description="사람 사진"),
+    garment: UploadFile = File(..., description="의상 이미지"),
+    garment_desc: str = Form(..., description="의상 설명"),
+    crop: bool = Form(False, description="자동 크롭 여부"),
+    denoise_steps: int = Form(30, ge=1, le=100, description="노이즈 제거 단계"),
+    seed: int = Form(42, description="랜덤 시드"),
+):
+    try:
+        background_url = _upload_input_file(background, "tryon/backgrounds")
+        garment_url = _upload_input_file(garment, "tryon/garments")
+        result_url, masked_url = await run_in_threadpool(
+            run_virtual_tryon,
+            background_url,
+            garment_url,
+            garment_desc,
+            True,
+            crop,
+            denoise_steps,
+            seed,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Virtual try-on failed: {exc}") from exc
+
+    return TryOnResponse(result_url=result_url, masked_url=masked_url)
 
 if __name__ == "__main__":
     import uvicorn
