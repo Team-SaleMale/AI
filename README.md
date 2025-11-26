@@ -98,6 +98,10 @@ RECOMMENDATION_API_URL=http://ai-server:8000
 | `HF_SPACE_ID` | Hugging Face Space ID | `yisol/IDM-VTON` |
 | `HF_API_TOKEN` | Hugging Face API 토큰 (Private Space 시) | (선택) |
 | `HF_REQUEST_TIMEOUT` | Hugging Face 호출 타임아웃(초) | `600` |
+| `S3_BUCKET_NAME` | 결과 이미지 저장용 S3 버킷 | (필수) |
+| `S3_REGION` | S3 리전 (또는 `AWS_S3_REGION`) | `ap-northeast-2` |
+| `AWS_ACCESS_KEY` | S3 접근 키 | (필수) |
+| `AWS_SECRET_KEY` | S3 시크릿 키 | (필수) |
 
 ## 📡 API 엔드포인트
 
@@ -134,11 +138,11 @@ seed: 42
 응답:
 ```
 {
-  "result_url": "data:image/png;base64,iVBORw0KGgoAAA...",
-  "masked_url": "data:image/png;base64,iVBORw0KGgoAAA..."
+  "result_url": "https://your-bucket.s3.ap-northeast-2.amazonaws.com/tryon/results/....png",
+  "masked_url": "https://your-bucket.s3.ap-northeast-2.amazonaws.com/tryon/masked/....png"
 }
 ```
-결과는 `data:` URL 형태로 반환되므로, 브라우저나 클라이언트에서 그대로 보여 주거나 필요 시 파일로 저장하면 됩니다.
+FastAPI가 Hugging Face에서 받은 결과 이미지를 S3에 업로드한 뒤, 해당 공개 URL을 반환합니다.
 
 ## 🚢 배포 (GitHub Actions CD)
 
@@ -159,6 +163,7 @@ seed: 42
 - `DB_NAME`: 데이터베이스 이름
 - `DOCKER_USERNAME`: Docker Hub 사용자명
 - `HF_API_TOKEN`: Hugging Face Space 토큰 (필요시)
+- `S3_BUCKET_NAME`, `AWS_S3_REGION`, `AWS_ACCESS_KEY`, `AWS_SECRET_KEY`: S3 업로드용
 
 ### 배포 흐름
 

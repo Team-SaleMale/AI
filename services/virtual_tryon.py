@@ -1,4 +1,3 @@
-import base64
 import mimetypes
 import os
 import tempfile
@@ -6,6 +5,7 @@ from typing import Tuple
 
 from gradio_client import Client, file as gradio_file
 
+from utils.storage import upload_bytes
 HF_SPACE_ID = os.getenv("HF_SPACE_ID", "yisol/IDM-VTON")
 HF_API_TOKEN = os.getenv("HF_API_TOKEN") or None
 HF_REQUEST_TIMEOUT = int(os.getenv("HF_REQUEST_TIMEOUT", "600"))
@@ -80,7 +80,30 @@ def run_virtual_tryon(
             pass
 
     output_path, masked_path = result
-    result_url = _to_data_url_from_path(output_path)
-    masked_url = _to_data_url_from_path(masked_path) if masked_path else None
+
+    # 결과 이미지를 읽어서 S3에 업로드
+    with open(output_path, "rb") as f:
+        output_bytes = f.read()
+    output_mime = mimetypes.guess_type(output_path)[0] or "image/png"
+    result_url = upload_bytes(
+        output_bytes,
+        prefix="tryon/results",
+        filename=os.path.basename(output_path),
+        content_type=output_mime,
+    )
+
+    masked_url: str | None = None
+    if masked_path:
+        with open(masked_path, "rb") as f:
+            masked_bytes = f.read()
+        masked_mime = mimetypes.guess_type(masked_path)[0] or "image/png"
+        masked_url = upload_bytes(
+            masked_bytes,
+            prefix="tryon/masked",
+            filename=os.path.basename(masked_path),
+            content_type=masked_mime,
+        )
+
     return result_url, masked_url
+
 
