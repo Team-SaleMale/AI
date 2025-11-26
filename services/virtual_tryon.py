@@ -1,49 +1,101 @@
+import base64
+import json
 import os
 from typing import Tuple
 
-from gradio_client import Client, file as gradio_file
-
-from utils.storage import upload_local_file
+import requests
 
 HF_SPACE_ID = os.getenv("HF_SPACE_ID", "yisol/IDM-VTON")
 HF_API_TOKEN = os.getenv("HF_API_TOKEN") or None
+HF_REQUEST_TIMEOUT = int(os.getenv("HF_REQUEST_TIMEOUT", "600"))
 
-_client: Client | None = None
+
+def _build_space_url() -> str:
+    # allow overriding with full url
+    if HF_SPACE_ID.startswith("http"):
+        return HF_SPACE_ID.rstrip("/")
+    return f"https://{HF_SPACE_ID.replace('/', '-').lower()}.hf.space"
 
 
-def _get_client() -> Client:
-    global _client
-    if _client is None:
-        kwargs = {}
-        if HF_API_TOKEN:
-            kwargs["hf_token"] = HF_API_TOKEN
-        _client = Client(HF_SPACE_ID, **kwargs)
-    return _client
+HF_BASE_URL = _build_space_url()
+
+
+def _to_data_url(content: bytes, content_type: str | None) -> str | None:
+    if not content:
+        return None
+    mime = content_type or "image/png"
+    encoded = base64.b64encode(content).decode("utf-8")
+    return f"data:{mime};base64,{encoded}"
+
+
+def _extract_media(entries, index: int) -> str | None:
+    if not entries or len(entries) <= index:
+        return None
+    entry = entries[index]
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        return entry.get("url") or entry.get("data")
+    if isinstance(entry, list) and entry:
+        return _extract_media(entry, 0)
+    return None
 
 
 def run_virtual_tryon(
-    background_url: str,
-    garment_url: str,
+    background_bytes: bytes,
+    background_content_type: str | None,
+    background_filename: str | None,
+    garment_bytes: bytes,
+    garment_content_type: str | None,
+    garment_filename: str | None,
     garment_desc: str,
     is_checked: bool = True,
     crop: bool = False,
     denoise_steps: int = 30,
     seed: int = 42,
 ) -> Tuple[str, str | None]:
-    client = _get_client()
-    result = client.predict(
-        dict={"background": gradio_file(background_url), "layers": [], "composite": None},
-        garm_img=gradio_file(garment_url),
-        garment_des=garment_desc,
-        is_checked=is_checked,
-        is_checked_crop=crop,
-        denoise_steps=denoise_steps,
-        seed=seed,
-        api_name="/tryon",
-    )
+    headers = {}
+    if HF_API_TOKEN:
+        headers["Authorization"] = f"Bearer {HF_API_TOKEN}"
 
-    output_path, masked_path = result
-    output_url = upload_local_file(output_path, "tryon/results")
-    masked_url = upload_local_file(masked_path, "tryon/masked") if masked_path else None
-    return output_url, masked_url
+    editor_payload = {
+        "background": _to_data_url(background_bytes, background_content_type),
+        "layers": [],
+        "composite": None,
+    }
+
+    files = {
+        "dict": (None, json.dumps(editor_payload), "application/json"),
+        "garm_img": (
+            garment_filename or "garment.png",
+            garment_bytes,
+            garment_content_type or "application/octet-stream",
+        ),
+    }
+
+    data = {
+        "garment_des": garment_desc,
+        "is_checked": str(is_checked).lower(),
+        "is_checked_crop": str(crop).lower(),
+        "denoise_steps": str(denoise_steps),
+        "seed": str(seed),
+    }
+
+    response = requests.post(
+        f"{HF_BASE_URL}/tryon",
+        data=data,
+        files=files,
+        headers=headers,
+        timeout=HF_REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    outputs = payload.get("data", [])
+    result_media = _extract_media(outputs, 0)
+    masked_media = _extract_media(outputs, 1)
+
+    if not result_media:
+        raise RuntimeError("Hugging Face 응답에서 결과 이미지를 찾을 수 없습니다.")
+
+    return result_media, masked_media
 

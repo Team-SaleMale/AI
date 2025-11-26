@@ -17,7 +17,6 @@ from models.api_models import (
 from models.db_models import UserDB
 from utils.database import get_db, SessionLocal
 from utils.recommender import AuctionRecommender
-from utils.storage import upload_fileobj
 from services.virtual_tryon import run_virtual_tryon
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -83,21 +82,6 @@ def get_recommender_instance() -> AuctionRecommender:
         )
     return recommender_instance
 
-
-def _file_size(upload: UploadFile) -> int:
-    """업로드 파일 사이즈(바이트) 계산"""
-    current = upload.file.tell()
-    upload.file.seek(0, os.SEEK_END)
-    size = upload.file.tell()
-    upload.file.seek(current)
-    return size
-
-
-def _upload_input_file(upload: UploadFile, prefix: str) -> str:
-    upload.file.seek(0)
-    filename = upload.filename or "upload.bin"
-    content_type = upload.content_type or "application/octet-stream"
-    return upload_fileobj(upload.file, filename, prefix, content_type)
 
 @app.get("/", response_model=HealthCheckResponse)
 def health_check():
@@ -183,8 +167,8 @@ async def virtual_tryon_endpoint(
     seed: int = Form(42, description="랜덤 시드"),
 ):
     request_id = uuid.uuid4().hex
-    bg_size = _file_size(background)
-    garment_size = _file_size(garment)
+    background_bytes = await background.read()
+    garment_bytes = await garment.read()
     logger.info(
         "[%s] /virtual-tryon 요청 진입 - desc=%s, crop=%s, denoise=%s, seed=%s, background_size=%s bytes, garment_size=%s bytes",
         request_id,
@@ -192,31 +176,27 @@ async def virtual_tryon_endpoint(
         crop,
         denoise_steps,
         seed,
-        bg_size,
-        garment_size,
+        len(background_bytes),
+        len(garment_bytes),
     )
 
     try:
-        logger.info("[%s] S3 업로드 시작 (background)", request_id)
-        background_url = _upload_input_file(background, "tryon/backgrounds")
-        logger.info("[%s] S3 업로드 완료 (background)", request_id)
-
-        logger.info("[%s] S3 업로드 시작 (garment)", request_id)
-        garment_url = _upload_input_file(garment, "tryon/garments")
-        logger.info("[%s] S3 업로드 완료 (garment)", request_id)
-
         logger.info("[%s] Hugging Face 호출 시작", request_id)
         result_url, masked_url = await run_in_threadpool(
             run_virtual_tryon,
-            background_url,
-            garment_url,
+            background_bytes,
+            background.content_type,
+            background.filename,
+            garment_bytes,
+            garment.content_type,
+            garment.filename,
             garment_desc,
             True,
             crop,
             denoise_steps,
             seed,
         )
-        logger.info("[%s] Hugging Face 호출 성공 - result=%s, masked=%s", request_id, result_url, masked_url)
+        logger.info("[%s] Hugging Face 호출 성공 - result=%s, masked=%s", request_id, bool(result_url), bool(masked_url))
     except Exception as exc:
         logger.exception("[%s] /virtual-tryon 처리 실패", request_id)
         raise HTTPException(status_code=502, detail=f"Virtual try-on failed: {exc}") from exc

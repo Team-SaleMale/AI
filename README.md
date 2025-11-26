@@ -58,10 +58,7 @@ uvicorn main:app --reload
 
 ## 📦 Docker Compose 구조
 
-이 레포지토리의 `docker-compose.yml`은 다음 서비스를 포함합니다:
-
-- **ai-server**: FastAPI 추천 서버
-- **redis**: 캐시 서버 (선택적 사용)
+이 레포지토리의 `docker-compose.yml`은 FastAPI 추천 서버(`ai-server`) 컨테이너 하나로 구성됩니다.
 
 ### Spring Boot와 통합
 
@@ -100,10 +97,7 @@ RECOMMENDATION_API_URL=http://ai-server:8000
 | `DOCKERHUB_USERNAME` | Docker Hub 사용자명 | (필수) |
 | `HF_SPACE_ID` | Hugging Face Space ID | `yisol/IDM-VTON` |
 | `HF_API_TOKEN` | Hugging Face API 토큰 (Private Space 시) | (선택) |
-| `S3_BUCKET_NAME` | 이미지 저장용 S3 버킷 | (필수) |
-| `S3_REGION` | S3 리전 | `ap-northeast-2` |
-| `AWS_ACCESS_KEY` | S3 접근 키 | (필수) |
-| `AWS_SECRET_KEY` | S3 시크릿 키 | (필수) |
+| `HF_REQUEST_TIMEOUT` | Hugging Face 호출 타임아웃(초) | `600` |
 
 ## 📡 API 엔드포인트
 
@@ -140,10 +134,11 @@ seed: 42
 응답:
 ```
 {
-  "result_url": "https://s3.../tryon/results/xxx.png",
-  "masked_url": "https://s3.../tryon/masked/xxx.png"
+  "result_url": "data:image/png;base64,iVBORw0KGgoAAA...",
+  "masked_url": "data:image/png;base64,iVBORw0KGgoAAA..."
 }
 ```
+결과는 `data:` URL 형태로 반환되므로, 브라우저나 클라이언트에서 그대로 보여 주거나 필요 시 파일로 저장하면 됩니다.
 
 ## 🚢 배포 (GitHub Actions CD)
 
@@ -164,7 +159,6 @@ seed: 42
 - `DB_NAME`: 데이터베이스 이름
 - `DOCKER_USERNAME`: Docker Hub 사용자명
 - `HF_API_TOKEN`: Hugging Face Space 토큰 (필요시)
-- `S3_BUCKET_NAME`, `S3_REGION`, `AWS_ACCESS_KEY`, `AWS_SECRET_KEY`: S3 업로드용
 
 ### 배포 흐름
 
