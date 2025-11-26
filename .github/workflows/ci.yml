@@ -69,14 +69,29 @@ jobs:
 
           # .env 파일 생성
           cat > .env << EOF
+          # FastAPI Runtime
           UVICORN_WORKERS=2
           UVICORN_HOST=0.0.0.0
           UVICORN_PORT=8000
+
+          # Database Configuration
           DB_USER=${{ secrets.DB_USER }}
           DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           DB_HOST=${{ secrets.DB_HOST }}
           DB_PORT=${{ secrets.DB_PORT || '5432' }}
           DB_NAME=${{ secrets.DB_NAME }}
+
+          # Hugging Face
+          HF_SPACE_ID=${{ secrets.HF_SPACE_ID }}
+          HF_API_TOKEN=${{ secrets.HF_API_TOKEN }}
+
+          # AWS S3
+          S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}
+          S3_REGION=${{ secrets.AWS_S3_REGION }}
+          AWS_ACCESS_KEY=${{ secrets.AWS_ACCESS_KEY }}
+          AWS_SECRET_KEY=${{ secrets.AWS_SECRET_KEY }}
+
+          # Docker Hub
           DOCKERHUB_USERNAME=${{ secrets.DOCKER_USERNAME }}
           EOF
 
