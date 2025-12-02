@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, String, Integer, Text, DateTime, Boolean, ForeignKey, Enum as SQLEnum, Double
+from sqlalchemy import Column, BigInteger, String, Integer, Text, DateTime, Boolean, ForeignKey, Enum as SQLEnum, Double, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from models.enums import CategoryEnum, ItemStatusEnum, RangeSettingEnum
@@ -86,10 +86,28 @@ class UserLikedDB(Base):
 class RegionDB(Base):
     """지역 테이블 (Spring Boot Region 엔티티와 매핑)"""
     __tablename__ = "region"
-    
+
     region_id = Column(BigInteger, primary_key=True, autoincrement=True)
     sido = Column(String(50), nullable=False)  # 시/도 (예: 서울특별시, 경기도)
     sigungu = Column(String(50), nullable=False)  # 시/군/구 (예: 강남구, 수원시)
     eupmyeondong = Column(String(50), nullable=False)  # 읍/면/동 (예: 역삼동)
     latitude = Column(Double, nullable=False)
     longitude = Column(Double, nullable=False)
+
+class MarketPriceDB(Base):
+    """중고 시세 캐시 테이블 (가격 추천용)"""
+    __tablename__ = "market_price"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    keyword = Column(String(200), nullable=False, index=True)  # 검색 키워드
+    platform = Column(String(50), nullable=False)  # joongna, daangn
+    avg_price = Column(Integer, nullable=True)  # 평균 시세
+    min_price = Column(Integer, nullable=True)  # 최저가
+    max_price = Column(Integer, nullable=True)  # 최고가
+    sample_count = Column(Integer, nullable=True)  # 분석한 상품 수
+    crawled_at = Column(DateTime, default=datetime.utcnow, index=True)  # 크롤링 시각
+
+    # 키워드+플랫폼 조합은 유일 (UPSERT를 위해)
+    __table_args__ = (
+        UniqueConstraint('keyword', 'platform', name='uix_keyword_platform'),
+    )

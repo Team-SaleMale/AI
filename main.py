@@ -7,17 +7,31 @@ import logging
 import os
 import time
 import uuid
+import asyncio
+import sys
 
 from models.api_models import (
     RecommendationRequest,
     RecommendationResponse,
     HealthCheckResponse,
     TryOnResponse,
+    PriceSuggestRequest,
+    PriceSuggestResponse,
 )
 from models.db_models import UserDB
 from utils.database import get_db, SessionLocal
 from utils.recommender import AuctionRecommender
+from utils.market_price_service import MarketPriceService
+from utils.price_ai import format_price_message
 from services.virtual_tryon import run_virtual_tryon
+
+# Windows 환경에서 Playwright 호환성을 위한 이벤트 루프 정책 설정
+if sys.platform == "win32":
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        print("✅ Windows 이벤트 루프 정책 변경 완료")
+    except Exception as e:
+        print(f"⚠️ 이벤트 루프 정책 변경 실패: {e}")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("valuebid-ai")
@@ -202,6 +216,81 @@ async def virtual_tryon_endpoint(
         raise HTTPException(status_code=502, detail=f"Virtual try-on failed: {exc}") from exc
 
     return TryOnResponse(result_url=result_url, masked_url=masked_url)
+
+
+@app.post("/api/price-suggest", response_model=PriceSuggestResponse)
+async def suggest_price(
+    request: PriceSuggestRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    AI 가격 추천 API
+
+    Args:
+        request: {"product_name": "아이폰 14 Pro"}
+
+    Returns:
+        {
+            "suggested_start_price": 720000,
+            "message": "평균 시세 760,000원 기반 (12개 상품 분석)"
+        }
+    """
+    logger.info("[/api/price-suggest] 요청 시작: product_name=%s", request.product_name)
+    start_time = time.time()
+
+    try:
+        # 시세 서비스 초기화
+        service = MarketPriceService(cache_hours=24)
+
+        # 캐시 조회 또는 실시간 크롤링 (동기 함수를 스레드풀에서 실행)
+        result = await run_in_threadpool(
+            service.get_or_crawl,
+            db,
+            request.product_name,
+            None  # category: 카테고리는 Spring Boot에서 전달받도록 확장 가능
+        )
+
+        suggested_price = result.get("suggested_start_price")
+
+        if suggested_price is None:
+            # 데이터 없음
+            elapsed = time.time() - start_time
+            logger.warning(
+                "[/api/price-suggest] 시세 데이터 없음: product_name=%s, 소요 시간=%.4f초",
+                request.product_name,
+                elapsed
+            )
+            return PriceSuggestResponse(
+                suggested_start_price=None,
+                message="시세 데이터를 찾을 수 없습니다"
+            )
+
+        # 성공
+        message = format_price_message(result, request.product_name)
+        from_cache = result.get("from_cache", False)
+        cache_status = "(캐시)" if from_cache else ""
+
+        elapsed = time.time() - start_time
+        logger.info(
+            "[/api/price-suggest] 요청 완료: 추천가=%s원, 소요 시간=%.4f초 %s",
+            suggested_price,
+            elapsed,
+            cache_status
+        )
+
+        return PriceSuggestResponse(
+            suggested_start_price=suggested_price,
+            message=message
+        )
+
+    except Exception as e:
+        logger.exception("[/api/price-suggest] 가격 추천 API 오류")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"가격 추천 중 오류 발생: {str(e)}"
+        )
+
 
 if __name__ == "__main__":
     import uvicorn

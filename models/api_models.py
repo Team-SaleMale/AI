@@ -35,3 +35,14 @@ class TryOnResponse(BaseModel):
     """가상 피팅 결과"""
     result_url: str
     masked_url: Optional[str] = None
+
+
+class PriceSuggestRequest(BaseModel):
+    """가격 추천 요청 모델"""
+    product_name: str  # 상품명 (예: "아이폰 14 Pro")
+
+
+class PriceSuggestResponse(BaseModel):
+    """가격 추천 응답 모델"""
+    suggested_start_price: Optional[int] = None  # 추천 시작가
+    message: str  # 설명 메시지
