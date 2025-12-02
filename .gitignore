@@ -53,3 +53,6 @@ htmlcov/
 
 # === 배포 관련 ===
 DEPLOYMENT_GUIDE.md
+
+# === 기타 ===
+.claude/
