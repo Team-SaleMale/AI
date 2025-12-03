@@ -70,6 +70,10 @@ class PriceCrawlerSelenium:
             # 방법 1: 동일 디렉토리에서 실행 파일 찾기
             exe_path = os.path.join(driver_dir, driver_name)
             if os.path.exists(exe_path) and os.path.isfile(exe_path):
+                # Linux에서 실행 권한 부여
+                if not is_windows:
+                    os.chmod(exe_path, 0o755)
+                    logger.info(f"ChromeDriver 실행 권한 부여: {exe_path}")
                 service = Service(exe_path)
                 logger.info(f"ChromeDriver 발견 (방법1): {exe_path}")
             else:
@@ -81,6 +85,10 @@ class PriceCrawlerSelenium:
                             exe_path = os.path.join(root, file)
                             # 실제 실행 파일인지 확인 (크기가 있는지)
                             if os.path.getsize(exe_path) > 1000000:  # 1MB 이상
+                                # Linux에서 실행 권한 부여
+                                if not is_windows:
+                                    os.chmod(exe_path, 0o755)
+                                    logger.info(f"ChromeDriver 실행 권한 부여: {exe_path}")
                                 service = Service(exe_path)
                                 logger.info(f"ChromeDriver 발견 (방법2): {exe_path}")
                                 break
@@ -90,6 +98,13 @@ class PriceCrawlerSelenium:
                 # 방법 3: 여전히 못 찾으면 원본 경로 시도
                 if not service:
                     logger.warning(f"ChromeDriver 실행 파일을 찾지 못함, 원본 경로 시도")
+                    # 원본 경로에도 실행 권한 부여 시도
+                    if not is_windows and os.path.exists(driver_path):
+                        try:
+                            os.chmod(driver_path, 0o755)
+                            logger.info(f"ChromeDriver 실행 권한 부여 (원본): {driver_path}")
+                        except Exception as e:
+                            logger.warning(f"실행 권한 부여 실패: {e}")
                     service = Service(driver_path)
 
             driver = webdriver.Chrome(service=service, options=chrome_options)
