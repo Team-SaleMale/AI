@@ -11,6 +11,18 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+
+    # Chrome을 위한 공유 메모리 설정
+    shm_size: '256m'
+
+    # 리소스 제한
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
     environment:
       # FastAPI Runtime
       UVICORN_WORKERS: ${UVICORN_WORKERS:-2}

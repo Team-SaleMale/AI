@@ -31,7 +31,7 @@ class PriceCrawlerSelenium:
         self.timeout = timeout
 
     def _create_driver(self):
-        """Chrome WebDriver 생성 (자동 다운로드)"""
+        """Chrome WebDriver 생성 (Linux/Docker 호환)"""
         chrome_options = Options()
         chrome_options.add_argument('--headless')  # 백그라운드 실행
         chrome_options.add_argument('--no-sandbox')
@@ -46,28 +46,45 @@ class PriceCrawlerSelenium:
             driver_path = ChromeDriverManager().install()
             logger.info(f"ChromeDriver 경로: {driver_path}")
 
-            # 실제 chromedriver.exe 파일 찾기
             import os
-            if os.path.isfile(driver_path) and driver_path.endswith('.exe'):
+            import platform
+
+            # OS별 ChromeDriver 실행 파일 이름
+            is_windows = platform.system() == 'Windows'
+            driver_name = 'chromedriver.exe' if is_windows else 'chromedriver'
+
+            # ChromeDriver 경로 탐색
+            if os.path.isfile(driver_path):
+                # 직접 실행 파일 경로가 반환된 경우
                 service = Service(driver_path)
+                logger.info(f"ChromeDriver 실행 파일: {driver_path}")
             else:
-                # 디렉토리가 반환된 경우 chromedriver.exe 찾기
+                # 디렉토리가 반환된 경우 OS별 실행 파일 찾기
                 driver_dir = driver_path if os.path.isdir(driver_path) else os.path.dirname(driver_path)
-                exe_path = os.path.join(driver_dir, 'chromedriver.exe')
+                exe_path = os.path.join(driver_dir, driver_name)
+
                 if os.path.exists(exe_path):
                     service = Service(exe_path)
                     logger.info(f"ChromeDriver 실행 파일: {exe_path}")
                 else:
-                    # 폴더 내 검색
+                    # 폴더 내 검색 (OS 구분 없이 둘 다 시도)
+                    found = False
                     for root, dirs, files in os.walk(driver_dir):
                         for file in files:
-                            if file == 'chromedriver.exe':
+                            # Windows는 .exe, Linux는 실행 권한 확인
+                            if file == driver_name or file == 'chromedriver':
                                 exe_path = os.path.join(root, file)
                                 service = Service(exe_path)
                                 logger.info(f"ChromeDriver 실행 파일 발견: {exe_path}")
+                                found = True
                                 break
-                        if 'service' in locals():
+                        if found:
                             break
+
+                    # 여전히 못 찾으면 기본 경로 시도
+                    if not found:
+                        logger.warning(f"ChromeDriver 실행 파일을 찾지 못함, 기본 경로 시도: {driver_path}")
+                        service = Service(driver_path)
 
             driver = webdriver.Chrome(service=service, options=chrome_options)
             driver.set_page_load_timeout(self.timeout)
