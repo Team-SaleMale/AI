@@ -44,7 +44,7 @@ class PriceCrawlerSelenium:
         try:
             # ChromeDriver 자동 다운로드 및 설치
             driver_path = ChromeDriverManager().install()
-            logger.info(f"ChromeDriver 경로: {driver_path}")
+            logger.info(f"ChromeDriver 초기 경로: {driver_path}")
 
             import os
             import platform
@@ -53,38 +53,44 @@ class PriceCrawlerSelenium:
             is_windows = platform.system() == 'Windows'
             driver_name = 'chromedriver.exe' if is_windows else 'chromedriver'
 
-            # ChromeDriver 경로 탐색
+            # 실제 chromedriver 실행 파일 찾기
+            service = None
+
+            # 반환된 경로의 디렉토리 찾기
             if os.path.isfile(driver_path):
-                # 직접 실행 파일 경로가 반환된 경우
-                service = Service(driver_path)
-                logger.info(f"ChromeDriver 실행 파일: {driver_path}")
+                driver_dir = os.path.dirname(driver_path)
+            elif os.path.isdir(driver_path):
+                driver_dir = driver_path
             else:
-                # 디렉토리가 반환된 경우 OS별 실행 파일 찾기
-                driver_dir = driver_path if os.path.isdir(driver_path) else os.path.dirname(driver_path)
-                exe_path = os.path.join(driver_dir, driver_name)
+                # 경로가 이상한 경우 상위 디렉토리 탐색
+                driver_dir = os.path.dirname(os.path.dirname(driver_path))
 
-                if os.path.exists(exe_path):
-                    service = Service(exe_path)
-                    logger.info(f"ChromeDriver 실행 파일: {exe_path}")
-                else:
-                    # 폴더 내 검색 (OS 구분 없이 둘 다 시도)
-                    found = False
-                    for root, dirs, files in os.walk(driver_dir):
-                        for file in files:
-                            # Windows는 .exe, Linux는 실행 권한 확인
-                            if file == driver_name or file == 'chromedriver':
-                                exe_path = os.path.join(root, file)
+            logger.info(f"ChromeDriver 탐색 디렉토리: {driver_dir}")
+
+            # 방법 1: 동일 디렉토리에서 실행 파일 찾기
+            exe_path = os.path.join(driver_dir, driver_name)
+            if os.path.exists(exe_path) and os.path.isfile(exe_path):
+                service = Service(exe_path)
+                logger.info(f"ChromeDriver 발견 (방법1): {exe_path}")
+            else:
+                # 방법 2: 하위 디렉토리까지 재귀 탐색
+                for root, dirs, files in os.walk(driver_dir):
+                    for file in files:
+                        # 실행 파일 이름 정확히 매칭 (대소문자 구분)
+                        if file == driver_name or (file == 'chromedriver' and not is_windows):
+                            exe_path = os.path.join(root, file)
+                            # 실제 실행 파일인지 확인 (크기가 있는지)
+                            if os.path.getsize(exe_path) > 1000000:  # 1MB 이상
                                 service = Service(exe_path)
-                                logger.info(f"ChromeDriver 실행 파일 발견: {exe_path}")
-                                found = True
+                                logger.info(f"ChromeDriver 발견 (방법2): {exe_path}")
                                 break
-                        if found:
-                            break
+                    if service:
+                        break
 
-                    # 여전히 못 찾으면 기본 경로 시도
-                    if not found:
-                        logger.warning(f"ChromeDriver 실행 파일을 찾지 못함, 기본 경로 시도: {driver_path}")
-                        service = Service(driver_path)
+                # 방법 3: 여전히 못 찾으면 원본 경로 시도
+                if not service:
+                    logger.warning(f"ChromeDriver 실행 파일을 찾지 못함, 원본 경로 시도")
+                    service = Service(driver_path)
 
             driver = webdriver.Chrome(service=service, options=chrome_options)
             driver.set_page_load_timeout(self.timeout)
