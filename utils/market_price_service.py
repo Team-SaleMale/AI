@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class MarketPriceService:
     """시세 서비스"""
 
-    def __init__(self, cache_hours: int = 24, auction_days: int = 30):
+    def __init__(self, cache_hours: int = 720, auction_days: int = 30):
         """
         Args:
             cache_hours: 캐시 유효 시간 (기본 24시간)
